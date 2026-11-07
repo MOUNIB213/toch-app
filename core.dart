@@ -6,7 +6,7 @@ import 'package:html/parser.dart' as hp;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:webfeed_plus/webfeed_plus.dart';
+import 'package:xml/xml.dart';
 
 const ua = {'User-Agent': 'TechNewsApp/1.0'};
 
@@ -38,34 +38,70 @@ class Repo {
 String _txt(String? h) => h == null ? '' : (hp.parse(h).documentElement?.text.trim() ?? '');
 String? _img(String? h) => h == null ? null : RegExp(r'<img[^>]+src="([^"]+)"').firstMatch(h)?.group(1);
 
+DateTime? _date(String? v) {
+  if (v == null) return null;
+  v = v.trim();
+  final iso = DateTime.tryParse(v);
+  if (iso != null) return iso;
+  try {
+    return HttpDate.parse(v.replaceAll(RegExp(r'\s[+-]\d{4}$'), ' GMT'));
+  } catch (_) {
+    return null;
+  }
+}
+
+String? _t(XmlElement e, String name) {
+  for (final c in e.childElements) {
+    if (c.name.local == name) return c.innerText;
+  }
+  return null;
+}
+
+String? _attr(XmlElement e, List<String> names, String attr) {
+  for (final c in e.childElements) {
+    if (names.contains(c.name.local)) {
+      final v = c.getAttribute(attr);
+      if (v != null && v.startsWith('http')) return v;
+    }
+  }
+  return null;
+}
+
 Future<List<Article>> _rss(Source s) async {
   final r = await http.get(Uri.parse(s.url), headers: ua).timeout(const Duration(seconds: 15));
-  final body = utf8.decode(r.bodyBytes, allowMalformed: true);
-  try {
-    return RssFeed.parse(body)
-        .items
-        .map((i) => Article(
-            title: _txt(i.title),
-            summary: _txt(i.description),
-            link: i.link ?? '',
-            source: s.name,
-            date: i.pubDate?.millisecondsSinceEpoch ?? 0,
-            image: i.enclosure?.url ?? _img(i.content?.value ?? i.description)))
-        .where((a) => a.link.isNotEmpty)
-        .toList();
-  } catch (_) {
-    return AtomFeed.parse(body)
-        .items
-        .map((i) => Article(
-            title: _txt(i.title),
-            summary: _txt(i.summary),
-            link: i.links?.first.href ?? '',
-            source: s.name,
-            date: i.updated?.millisecondsSinceEpoch ?? 0,
-            image: _img(i.content ?? i.summary)))
-        .where((a) => a.link.isNotEmpty)
-        .toList();
+  final doc = XmlDocument.parse(utf8.decode(r.bodyBytes, allowMalformed: true));
+  final out = <Article>[];
+  for (final e in doc.findAllElements('item')) {
+    final link = (_t(e, 'link') ?? '').trim();
+    if (link.isEmpty) continue;
+    final desc = _t(e, 'description');
+    out.add(Article(
+        title: _txt(_t(e, 'title')),
+        summary: _txt(desc),
+        link: link,
+        source: s.name,
+        date: _date(_t(e, 'pubDate'))?.millisecondsSinceEpoch ?? 0,
+        image: _attr(e, ['enclosure', 'thumbnail', 'content'], 'url') ?? _img(_t(e, 'encoded') ?? desc)));
   }
+  for (final e in doc.findAllElements('entry')) {
+    String link = '';
+    for (final c in e.childElements) {
+      if (c.name.local == 'link' && (c.getAttribute('rel') ?? 'alternate') == 'alternate') {
+        link = c.getAttribute('href') ?? '';
+        break;
+      }
+    }
+    if (link.isEmpty) continue;
+    final sum = _t(e, 'summary') ?? _t(e, 'content');
+    out.add(Article(
+        title: _txt(_t(e, 'title')),
+        summary: _txt(sum),
+        link: link,
+        source: s.name,
+        date: _date(_t(e, 'updated') ?? _t(e, 'published'))?.millisecondsSinceEpoch ?? 0,
+        image: _attr(e, ['thumbnail', 'content'], 'url') ?? _img(sum)));
+  }
+  return out;
 }
 
 Future<List<Article>> _reddit(Source s) async {

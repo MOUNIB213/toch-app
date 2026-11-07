@@ -11,7 +11,7 @@ dependencies:
     sdk: flutter
   http: ^1.2.0
   shared_preferences: ^2.2.0
-  webfeed_plus: ^1.1.0
+  xml: ^6.5.0
   html: ^0.15.4
   url_launcher: ^6.2.0
   path_provider: ^2.1.0
