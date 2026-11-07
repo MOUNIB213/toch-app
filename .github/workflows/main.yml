@@ -21,6 +21,15 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Arrange files
+        run: |
+          mkdir -p lib assets
+          for f in main core ui; do
+            if [ -f "$f.dart" ]; then mv "$f.dart" lib/; fi
+          done
+          if [ -f logo.png ]; then mv logo.png assets/; fi
+          ls -R lib assets
+
       - name: Generate Android platform files
         run: |
           mkdir -p /tmp/keep && cp -r lib assets pubspec.yaml /tmp/keep/
